@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  backend:
+    platform: linux/arm64
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - HF_TOKEN=${HF_TOKEN}
+    ports:
+      - "8000:8000"
+    volumes:
+      - model_cache:/app/model_cache
+    environment:
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      - HF_TOKEN=${HF_TOKEN}
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - ALGORITHM=${ALGORITHM}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - API_V1_STR=${API_V1_STR}
+      - PROJECT_NAME=${PROJECT_NAME}
+      - MODEL_CACHE_DIR=${MODEL_CACHE_DIR}
+    depends_on:
+      - db
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+
+  db:
+    image: postgres:15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=summarization
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
+  model_cache:
+    driver: local
+    driver_opts:
+      type: none
+      device: /tmp/model_cache
+      o: bind
+    labels:
+      - "com.docker.compose.volume.size=10G"
+
+secrets:
+  secret_key:
+    file: ./secrets/secret_key.txt 
