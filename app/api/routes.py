@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Form, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, func
 from typing import List, Optional
 from datetime import datetime, timedelta
 import logging
@@ -8,7 +9,7 @@ import logging
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.models import User, SummarizationRequest
-from app.schemas.schemas import UserCreate, UserResponse, Token, SummarizationRequestResponse
+from app.schemas.schemas import UserCreate, UserResponse, Token, SummarizationRequestResponse, RequestsSearchParams
 from app.services.summarization import process_media_file, validate_file, translate_text
 from app.core.security import get_password_hash, verify_password, get_current_user
 from app.crud import get_user_by_email, create_user, authenticate_user
@@ -176,16 +177,42 @@ async def create_public_summarization(
             detail="Error processing your request. Please try again later."
         )
 
-@router.get("/requests")
+@router.post("/requests")
 async def get_requests(
+    search_params: RequestsSearchParams,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
+    """
+    Получить историю запросов пользователя с возможностью поиска.
+    
+    Можно искать по имени файла (filename_query) и/или по содержимому транскрипции (content_query).
+    Если оба параметра пустые или не указаны, возвращает все запросы пользователя.
+    """
     try:
         current_user = await get_current_user(token, db)
-        requests = db.query(SummarizationRequest).filter(
+        
+        # Создаем базовый запрос
+        requests_query = db.query(SummarizationRequest).filter(
             SummarizationRequest.user_id == current_user.id
-        ).order_by(SummarizationRequest.created_at.desc()).all()
+        )
+        
+        # Применяем фильтр по имени файла, если он указан
+        if search_params.filename_query:
+            search_term = f"%{search_params.filename_query}%"
+            requests_query = requests_query.filter(
+                SummarizationRequest.filename.ilike(search_term)
+            )
+        
+        # Применяем фильтр по содержимому транскрипции, если он указан
+        if search_params.content_query:
+            search_term = f"%{search_params.content_query}%"
+            requests_query = requests_query.filter(
+                SummarizationRequest.transcript.ilike(search_term)
+            )
+        
+        # Сортируем результаты по дате создания (новые сверху)
+        requests = requests_query.order_by(SummarizationRequest.created_at.desc()).all()
         
         return [
             {
@@ -203,6 +230,101 @@ async def get_requests(
         raise HTTPException(
             status_code=401,
             detail="Необходима авторизация для просмотра истории запросов"
+        )
+
+@router.get("/requests/{request_id}")
+async def get_request_by_id(
+    request_id: int,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    """
+    Получить конкретный запрос по ID.
+    """
+    try:
+        current_user = await get_current_user(token, db)
+        
+        # Ищем запрос по ID и проверяем, что он принадлежит текущему пользователю
+        request = db.query(SummarizationRequest).filter(
+            SummarizationRequest.id == request_id,
+            SummarizationRequest.user_id == current_user.id
+        ).first()
+        
+        if not request:
+            raise HTTPException(
+                status_code=404,
+                detail="Запрос не найден или у вас нет доступа к нему"
+            )
+        
+        return {
+            "id": request.id,
+            "filename": request.filename,
+            "status": request.status,
+            "transcript": request.transcript,
+            "summary": request.summary,
+            "created_at": request.created_at
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_request_by_id: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка при получении запроса"
+        )
+
+@router.put("/requests/{request_id}/update")
+async def update_request(
+    request_id: int,
+    transcript: Optional[str] = Form(None),
+    summary: Optional[str] = Form(None),
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    """
+    Обновить транскрипцию и/или саммари запроса по ID.
+    """
+    try:
+        current_user = await get_current_user(token, db)
+        
+        # Ищем запрос по ID и проверяем, что он принадлежит текущему пользователю
+        request = db.query(SummarizationRequest).filter(
+            SummarizationRequest.id == request_id,
+            SummarizationRequest.user_id == current_user.id
+        ).first()
+        
+        if not request:
+            raise HTTPException(
+                status_code=404,
+                detail="Запрос не найден или у вас нет доступа к нему"
+            )
+        
+        # Обновляем только те поля, которые были переданы
+        if transcript is not None:
+            request.transcript = transcript
+        
+        if summary is not None:
+            request.summary = summary
+        
+        # Сохраняем изменения
+        db.commit()
+        db.refresh(request)
+        
+        return {
+            "id": request.id,
+            "filename": request.filename,
+            "status": request.status,
+            "transcript": request.transcript,
+            "summary": request.summary,
+            "created_at": request.created_at
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update_request: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка при обновлении запроса"
         )
 
 @router.get("/check-auth")

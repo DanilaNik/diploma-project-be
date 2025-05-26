@@ -67,4 +67,5 @@ cmake-build-debug/
 local.properties
 .log
 .exe
-
+whisper.cpp
+.ollama/

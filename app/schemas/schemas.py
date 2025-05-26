@@ -45,4 +45,9 @@ class SummarizationRequestResponse(BaseModel):
 
 class LocalFileRequest(BaseModel):
     """Schema for local file summarization request."""
-    video_path: str 
+    video_path: str
+
+class RequestsSearchParams(BaseModel):
+    """Параметры поиска по истории запросов."""
+    filename_query: Optional[str] = None
+    content_query: Optional[str] = None 
