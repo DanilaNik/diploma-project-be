@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # JWT settings
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 600
     
     # Hugging Face settings
     HF_TOKEN: str
@@ -61,8 +61,8 @@ class ModelSettings(BaseSettings):
     DEVICE: str = "mps"  # Явно указываем mps для Mac
     
     # Параметры транскрибации
-    TRANSCRIPTION_CHUNK_LENGTH: int = 300  # уменьшаем размер чанка до 5 минут
-    TRANSCRIPTION_BEAM_SIZE: int = 1  # уменьшаем beam size для ускорения
+    TRANSCRIPTION_CHUNK_LENGTH: int = 300
+    TRANSCRIPTION_BEAM_SIZE: int = 1
     
     # Параметры суммаризации
     SUMMARIZATION_MAX_LENGTH: int = 150
@@ -73,7 +73,7 @@ class ModelSettings(BaseSettings):
         env_prefix = "MODEL_"  # Добавляем префикс для переменных окружения
         env_file = ".env"
         case_sensitive = True
-        extra = "allow"  # Разрешаем дополнительные поля
+        extra = "allow" 
 
 settings = Settings()
 settings_model = ModelSettings() 

@@ -33,7 +33,7 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         if db_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Пользователь с таким email уже зарегистрирован. Пожалуйста, используйте другой email или выполните вход."
             )
         
         # Create new user
@@ -47,11 +47,14 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(db_user)
         return db_user
+    except HTTPException:
+        # Прокидываем HTTPException дальше
+        raise
     except Exception as e:
         logger.error(f"Error registering user: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error registering user"
+            detail="Произошла ошибка при регистрации. Пожалуйста, попробуйте позже."
         )
 
 @router.post("/login", response_model=Token)
