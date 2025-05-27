@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any, Callable
 import torch
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
@@ -20,6 +20,7 @@ import multiprocessing
 import gc
 from app.services.transcription import TranscriptionService
 from app.services.text_processing import TextProcessor
+import functools
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,16 @@ def get_text_processor():
         )
     return text_processor
 
-# Создаем пул потоков для параллельной обработки
-executor = ThreadPoolExecutor(max_workers=max(1, multiprocessing.cpu_count() - 1))
+# Создаем пул потоков для параллельной обработки с бóльшим количеством рабочих потоков
+executor = ThreadPoolExecutor(max_workers=max(2, multiprocessing.cpu_count()))
+
+# Вспомогательная функция для выполнения синхронной задачи в ThreadPoolExecutor
+async def run_in_threadpool(func: Callable, *args, **kwargs) -> Any:
+    """Запускает синхронную функцию в пуле потоков."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, functools.partial(func, *args, **kwargs)
+    )
 
 # Словарь соответствия языковых кодов и префиксов
 LANGUAGE_PREFIXES = {
@@ -366,20 +375,20 @@ async def process_media_file(file: UploadFile, language: str) -> dict:
         # Читаем содержимое файла
         content = await file.read()
         
-        # Извлекаем аудио
-        audio_path = extract_audio_from_memory(content)
+        # Извлекаем аудио (запускаем в пуле потоков, так как это I/O операция)
+        audio_path = await run_in_threadpool(extract_audio_from_memory, content)
         
         try:
-            # Транскрибируем аудио
-            transcription = transcribe_audio(audio_path, language)
+            # Транскрибируем аудио (тяжелая операция - запускаем в пуле потоков)
+            transcription = await run_in_threadpool(transcribe_audio, audio_path, language)
             
-            # Генерируем краткое содержание
-            summary = generate_summary(transcription, language)
+            # Генерируем краткое содержание (тяжелая операция - запускаем в пуле потоков)
+            summary = await run_in_threadpool(generate_summary, transcription, language)
             
             # Если язык не русский, делаем перевод
             translation = None
             if language != "ru":
-                translation = translate_text(summary, "ru")
+                translation = await run_in_threadpool(translate_text, summary, "ru")
             
             return {
                 "transcription": transcription,
@@ -393,7 +402,7 @@ async def process_media_file(file: UploadFile, language: str) -> dict:
                 os.unlink(audio_path)
             
             # Очищаем память
-            clear_gpu_memory()
+            await run_in_threadpool(clear_gpu_memory)
             
     except Exception as e:
         logger.error(f"Error in process_media_file: {str(e)}", exc_info=True)
