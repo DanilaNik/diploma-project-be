@@ -1,11 +1,31 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Dict
 import os
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import Optional
 
 load_dotenv()
+
+# Словарь соответствия языковых кодов и префиксов
+LANGUAGE_PREFIXES = {
+    'ru': 'Сделай краткое содержание: ',
+    'en': 'Summarize: ',
+    'de': 'Zusammenfassen: ',
+    'fr': 'Résumer: ',
+    'es': 'Resumir: ',
+    'zh': '总结: '
+}
+
+# Словарь для перевода
+LANGUAGE_NAMES = {
+    'en': 'English',
+    'zh': 'Chinese',
+    'es': 'Spanish',
+    'fr': 'French',
+    'de': 'German',
+    'ru': 'Russian'
+}
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Video Summarization API"

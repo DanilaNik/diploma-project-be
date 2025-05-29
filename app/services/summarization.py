@@ -15,7 +15,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import ffmpeg
 import subprocess
-from app.core.config import settings, settings_model
+from app.core.config import settings, settings_model, LANGUAGE_PREFIXES, LANGUAGE_NAMES
 import multiprocessing
 import gc
 from app.services.transcription import TranscriptionService
@@ -55,26 +55,6 @@ async def run_in_threadpool(func: Callable, *args, **kwargs) -> Any:
     return await loop.run_in_executor(
         executor, functools.partial(func, *args, **kwargs)
     )
-
-# Словарь соответствия языковых кодов и префиксов
-LANGUAGE_PREFIXES = {
-    'ru': 'Сделай краткое содержание: ',
-    'en': 'Summarize: ',
-    'de': 'Zusammenfassen: ',
-    'fr': 'Résumer: ',
-    'es': 'Resumir: ',
-    'zh': '总结: '
-}
-
-# Словарь для перевода
-LANGUAGE_NAMES = {
-    'en': 'English',
-    'zh': 'Chinese',
-    'es': 'Spanish',
-    'fr': 'French',
-    'de': 'German',
-    'ru': 'Russian'
-}
 
 def validate_file(file: UploadFile) -> None:
     """Validate file size and extension."""
@@ -220,27 +200,54 @@ def clear_gpu_memory():
 def summarize_text(text: str, language: str) -> str:
     """Суммаризирует текст, используя соответствующую модель."""
     try:
+        logger.info(f"Summarizing text in {language}, text length: {len(text)} chars")
+        
+        # Проверяем язык
+        if language not in LANGUAGE_PREFIXES:
+            logger.warning(f"Unsupported language: {language}, falling back to English")
+            language = "en"
+            
         processor = get_text_processor()
-        return processor.summarize(
+        result = processor.summarize(
             text=text,
             language=language,
             max_length=settings_model.SUMMARIZATION_MAX_LENGTH,
             min_length=settings_model.SUMMARIZATION_MIN_LENGTH,
             temperature=settings_model.SUMMARIZATION_TEMPERATURE
         )
+        
+        logger.info(f"Summarization completed, result length: {len(result)} chars")
+        return result
     except Exception as e:
         logger.error(f"Error in summarize_text: {str(e)}", exc_info=True)
         raise
 
-def translate_text(text: str, target_language: str) -> str:
+def translate_text(text: str, target_language: str, source_language: str = None) -> str:
     """Переводит текст на целевой язык."""
     try:
+        # Если исходный язык не указан, предполагаем английский
+        source_language = source_language or "en"
+        
+        logger.info(f"Translating text from {source_language} to {target_language}, text length: {len(text)} chars")
+        
+        # Проверяем языки
+        if target_language not in LANGUAGE_NAMES:
+            logger.warning(f"Unsupported target language: {target_language}, falling back to Russian")
+            target_language = "ru"
+            
+        if source_language not in LANGUAGE_NAMES:
+            logger.warning(f"Unsupported source language: {source_language}, falling back to English")
+            source_language = "en"
+            
         processor = get_text_processor()
-        return processor.translate(
+        result = processor.translate(
             text=text,
-            source_lang="ru",
+            source_lang=source_language,
             target_lang=target_language
         )
+        
+        logger.info(f"Translation completed, result length: {len(result)} chars")
+        return result
     except Exception as e:
         logger.error(f"Error in translate_text: {str(e)}", exc_info=True)
         raise
@@ -372,6 +379,13 @@ async def process_media_file(file: UploadFile, language: str) -> dict:
         # Валидация файла
         validate_file(file)
         
+        # Валидация языка
+        if language not in LANGUAGE_PREFIXES:
+            logger.warning(f"Unsupported language: {language}, falling back to English")
+            language = "en"
+        
+        logger.info(f"Processing media file in language: {language}")
+        
         # Читаем содержимое файла
         content = await file.read()
         
@@ -380,15 +394,21 @@ async def process_media_file(file: UploadFile, language: str) -> dict:
         
         try:
             # Транскрибируем аудио (тяжелая операция - запускаем в пуле потоков)
+            logger.info(f"Starting transcription in {language}")
             transcription = await run_in_threadpool(transcribe_audio, audio_path, language)
+            logger.info(f"Transcription completed, length: {len(transcription)} chars")
             
             # Генерируем краткое содержание (тяжелая операция - запускаем в пуле потоков)
+            logger.info(f"Starting summarization in {language}")
             summary = await run_in_threadpool(generate_summary, transcription, language)
+            logger.info(f"Summarization completed, length: {len(summary)} chars")
             
             # Если язык не русский, делаем перевод
             translation = None
             if language != "ru":
-                translation = await run_in_threadpool(translate_text, summary, "ru")
+                logger.info(f"Starting translation from {language} to Russian")
+                translation = await run_in_threadpool(translate_text, summary, "ru", language)
+                logger.info(f"Translation completed, length: {len(translation)} chars")
             
             return {
                 "transcription": transcription,

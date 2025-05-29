@@ -3,7 +3,8 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from typing import List, Optional
 import os
 import logging
-from app.core.config import settings_model
+import re
+from app.core.config import settings_model, LANGUAGE_PREFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,16 @@ class TextProcessor:
             
         return chunks
         
+    def _clean_mt5_output(self, text: str) -> str:
+        """Очищает выходные данные mT5 от специальных токенов."""
+        # Удаляем токены вида <extra_id_N>
+        cleaned = re.sub(r'<extra_id_\d+>', '', text)
+        # Удаляем токены вида <pad>
+        cleaned = re.sub(r'<pad>', '', cleaned)
+        # Удаляем повторяющиеся пробелы
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        return cleaned.strip()
+
     def summarize(
         self,
         text: str,
@@ -141,13 +152,13 @@ class TextProcessor:
             if language == "ru":
                 model = self.ru_model
                 tokenizer = self.ru_tokenizer
-                prefix = "summarize: "
+                prefix = LANGUAGE_PREFIXES.get('ru', 'Сделай краткое содержание: ')
             else:
                 model = self.mt5_model
                 tokenizer = self.mt5_tokenizer
-                prefix = "summarize: "
+                prefix = LANGUAGE_PREFIXES.get(language, 'Summarize: ')
                 
-            logger.info(f"Processing {len(chunks)} chunks with {model.__class__.__name__}")
+            logger.info(f"Processing {len(chunks)} chunks with {model.__class__.__name__} for language: {language}, using prefix: {prefix}")
             
             for i, chunk in enumerate(chunks):
                 try:
@@ -158,24 +169,39 @@ class TextProcessor:
                     if start_time:
                         start_time.record()
                     
+                    # Подготовка входных данных с учетом языка
+                    input_text = prefix + chunk
+                    logger.info(f"Input text prefix: '{prefix[:20]}...'")
+                    
                     inputs = tokenizer(
-                        prefix + chunk,
+                        input_text,
                         max_length=1024,
                         truncation=True,
                         return_tensors="pt"
                     ).to(self.device)
                     
                     with torch.no_grad():
+                        # Параметры генерации с учетом языка
+                        generation_params = {
+                            "max_length": max_length,
+                            "min_length": min_length,
+                            "do_sample": True,
+                            "temperature": temperature,
+                            "num_beams": 4,
+                            "no_repeat_ngram_size": 2,
+                            "top_k": 50,
+                            "top_p": 0.9
+                        }
+                        
+                        # Для не-русских языков используем более консервативные параметры
+                        if language != "ru":
+                            generation_params["num_beams"] = 5
+                            generation_params["length_penalty"] = 1.0
+                            generation_params["early_stopping"] = True
+                        
                         outputs = model.generate(
                             **inputs,
-                            max_length=max_length,
-                            min_length=min_length,
-                            do_sample=True,
-                            temperature=temperature,
-                            num_beams=4,
-                            no_repeat_ngram_size=2,
-                            top_k=50,
-                            top_p=0.9
+                            **generation_params
                         )
                     
                     if end_time:
@@ -184,6 +210,12 @@ class TextProcessor:
                         logger.info(f"Chunk {i+1} processing time: {start_time.elapsed_time(end_time):.2f}ms")
                         
                     summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                    
+                    # Очищаем выходные данные для mT5
+                    if language != "ru":
+                        summary = self._clean_mt5_output(summary)
+                        
+                    logger.info(f"Generated summary for chunk {i+1}: '{summary[:50]}...'")
                     summaries.append(summary)
                     
                     # Очищаем память после каждого третьего чанка
@@ -207,18 +239,23 @@ class TextProcessor:
         self,
         text: str,
         source_lang: str,
-        target_lang: str,
+        target_lang: str = "ru",
         max_length: int = 512
     ) -> str:
         """Переводит текст с использованием mT5."""
         try:
+            logger.info(f"Starting translation from {source_lang} to {target_lang}")
             chunks = self._chunk_text(text)
             translations = []
             
             for i, chunk in enumerate(chunks):
                 try:
+                    # Формируем инструкцию для перевода
+                    input_text = f"translate {source_lang} to {target_lang}: {chunk}"
+                    logger.info(f"Translation input for chunk {i+1}: '{input_text[:50]}...'")
+                    
                     inputs = self.mt5_tokenizer(
-                        f"translate {source_lang} to {target_lang}: {chunk}",
+                        input_text,
                         max_length=1024,
                         truncation=True,
                         return_tensors="pt"
@@ -229,22 +266,32 @@ class TextProcessor:
                             **inputs,
                             max_length=max_length,
                             num_beams=4,
-                            no_repeat_ngram_size=2
+                            length_penalty=1.0,
+                            no_repeat_ngram_size=2,
+                            early_stopping=True
                         )
                         
                     translation = self.mt5_tokenizer.decode(outputs[0], skip_special_tokens=True)
+                    
+                    # Очищаем выходные данные от специальных токенов
+                    translation = self._clean_mt5_output(translation)
+                    logger.info(f"Translation output for chunk {i+1}: '{translation[:50]}...'")
+                    
                     translations.append(translation)
                     
                     # Очищаем память после каждого третьего чанка
                     if (i + 1) % 3 == 0:
                         self._clear_gpu_memory()
+                        logger.info(f"Memory cleared after translation chunk {i+1}")
                         
                 except Exception as e:
-                    logger.error(f"Error processing chunk {i}: {str(e)}", exc_info=True)
+                    logger.error(f"Error processing translation chunk {i}: {str(e)}", exc_info=True)
                     # Пропускаем проблемный чанк и продолжаем
                     continue
                     
-            return " ".join(translations)
+            result = " ".join(translations)
+            logger.info(f"Translation completed, result length: {len(result)} chars")
+            return result
             
         except Exception as e:
             logger.error(f"Error in translate: {str(e)}", exc_info=True)
