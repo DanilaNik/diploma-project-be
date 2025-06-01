@@ -11,28 +11,24 @@ from datetime import datetime
 from app.db.database import SessionLocal, init_db
 from app.models.models import SummarizationRequest
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React frontend URL
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Инициализация базы данных при запуске
 @app.on_event("startup")
 async def startup_event():
     init_db()
     logger.info("Database initialized")
 
-# Include API routes
 app.include_router(api_router, prefix="/api")
 
 @app.get("/")
@@ -41,7 +37,6 @@ async def root():
 
 @app.post("/summarize")
 async def summarize_local_file(request_data: LocalFileRequest = Body(...)):
-    """Public endpoint to summarize a local video file without authentication."""
     try:
         file_path = request_data.video_path
         logging.info(f"Processing file: {file_path}")
@@ -50,20 +45,16 @@ async def summarize_local_file(request_data: LocalFileRequest = Body(...)):
             logging.error(f"File not found: {file_path}")
             raise HTTPException(status_code=404, detail="File not found")
         
-        # Открываем файл как UploadFile
         with open(file_path, 'rb') as f:
             file_content = f.read()
             
-        # Создаем объект UploadFile
         file = UploadFile(
             filename=os.path.basename(file_path),
             file=io.BytesIO(file_content)
         )
         
-        # Обрабатываем файл
         result = await process_media_file(file)
         
-        # Создаем запись в базе данных с user_id=0
         db = SessionLocal()
         try:
             request = SummarizationRequest(

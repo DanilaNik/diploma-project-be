@@ -7,7 +7,6 @@ from app.services.text_processing import TextProcessor
 from pathlib import Path
 import logging
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -15,12 +14,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def get_memory_usage():
-    """Get current memory usage in GB"""
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024 / 1024
 
 def clear_memory():
-    """Clear memory and cache"""
     logger.info(f"Memory usage before clearing: {get_memory_usage():.2f} GB")
     gc.collect()
     if torch.backends.mps.is_available():
@@ -31,7 +28,6 @@ def clear_memory():
 
 def main():
     try:
-        # Создаем директорию для кэша моделей
         cache_dir = Path("./model_cache")
         cache_dir.mkdir(exist_ok=True)
         
@@ -41,7 +37,6 @@ def main():
         
         logger.info(f"Начальное использование памяти: {get_memory_usage():.2f} GB")
         
-        # Загрузка Faster Whisper
         logger.info("\nЗагрузка Faster Whisper...")
         transcriber = TranscriptionService(
             model_size="large-v3",
@@ -50,7 +45,6 @@ def main():
         logger.info("Faster Whisper загружен успешно!")
         clear_memory()
         
-        # Загрузка моделей для обработки текста
         logger.info("\nЗагрузка моделей для обработки текста...")
         text_processor = TextProcessor(
             cache_dir=cache_dir,

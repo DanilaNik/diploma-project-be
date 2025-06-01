@@ -18,12 +18,9 @@ class TextProcessor:
             self.cache_dir = cache_dir or settings_model.MODEL_CACHE_DIR
             self.device = device if device != "auto" else settings_model.DEVICE
             
-            # Расширенная проверка устройства
             if self.device == "auto" or self.device == "mps":
                 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-                    # Проверяем поддержку операций
                     try:
-                        # Тестовый тензор
                         test_tensor = torch.zeros(1, device="mps")
                         logger.info("MPS device is fully supported and working")
                         self.device = "mps"
@@ -40,10 +37,8 @@ class TextProcessor:
             logger.info(f"PyTorch MPS available: {torch.backends.mps.is_available()}")
             logger.info(f"PyTorch MPS built: {torch.backends.mps.is_built()}")
             
-            # Создаем директорию для кэша, если её нет
             os.makedirs(self.cache_dir, exist_ok=True)
                 
-            # Загружаем модели
             self._load_models()
             
         except Exception as e:
@@ -53,12 +48,11 @@ class TextProcessor:
     def _load_models(self):
         try:
             logger.info(f"Loading FRED-T5 model on device: {self.device}")
-            # Загрузка FRED-T5 для русского языка
             self.ru_model = AutoModelForSeq2SeqLM.from_pretrained(
                 settings_model.RUSSIAN_MODEL,
                 torch_dtype=torch.float16 if self.device in ["mps", "cuda"] else torch.float32,
                 cache_dir=self.cache_dir,
-                load_in_8bit=settings_model.ENABLE_8BIT_QUANTIZATION and self.device != "mps"  # 8-bit только для CUDA/CPU
+                load_in_8bit=settings_model.ENABLE_8BIT_QUANTIZATION and self.device != "mps"
             ).to(self.device)
             
             self.ru_tokenizer = AutoTokenizer.from_pretrained(
@@ -67,12 +61,11 @@ class TextProcessor:
             )
             
             logger.info(f"Loading mT5 model on device: {self.device}")
-            # Загрузка mT5 для остальных языков
             self.mt5_model = AutoModelForSeq2SeqLM.from_pretrained(
                 settings_model.MT5_MODEL,
                 torch_dtype=torch.float16 if self.device in ["mps", "cuda"] else torch.float32,
                 cache_dir=self.cache_dir,
-                load_in_8bit=settings_model.ENABLE_8BIT_QUANTIZATION and self.device != "mps"  # 8-bit только для CUDA/CPU
+                load_in_8bit=settings_model.ENABLE_8BIT_QUANTIZATION and self.device != "mps"
             ).to(self.device)
             
             self.mt5_tokenizer = AutoTokenizer.from_pretrained(
