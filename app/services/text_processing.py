@@ -91,14 +91,12 @@ class TextProcessor:
             raise
             
     def _clear_gpu_memory(self):
-        """Очищает память GPU."""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         elif hasattr(torch.mps, 'empty_cache'):
             torch.mps.empty_cache()
         
     def _chunk_text(self, text: str, max_length: int = 512) -> List[str]:
-        """Разбивает текст на чанки с учетом предложений."""
         sentences = text.split('. ')
         chunks = []
         current_chunk = []
@@ -121,12 +119,8 @@ class TextProcessor:
         return chunks
         
     def _clean_mt5_output(self, text: str) -> str:
-        """Очищает выходные данные mT5 от специальных токенов."""
-        # Удаляем токены вида <extra_id_N>
         cleaned = re.sub(r'<extra_id_\d+>', '', text)
-        # Удаляем токены вида <pad>
         cleaned = re.sub(r'<pad>', '', cleaned)
-        # Удаляем повторяющиеся пробелы
         cleaned = re.sub(r'\s+', ' ', cleaned)
         return cleaned.strip()
 
@@ -138,10 +132,8 @@ class TextProcessor:
         min_length: Optional[int] = None,
         temperature: Optional[float] = None
     ) -> str:
-        """Суммаризирует текст с использованием соответствующей модели."""
         try:
             logger.info(f"Starting summarization on device: {self.device}")
-            # Используем значения из конфигурации, если не указаны явно
             max_length = max_length or settings_model.SUMMARIZATION_MAX_LENGTH
             min_length = min_length or settings_model.SUMMARIZATION_MIN_LENGTH
             temperature = temperature or settings_model.SUMMARIZATION_TEMPERATURE
@@ -169,7 +161,6 @@ class TextProcessor:
                     if start_time:
                         start_time.record()
                     
-                    # Подготовка входных данных с учетом языка
                     input_text = prefix + chunk
                     logger.info(f"Input text prefix: '{prefix[:20]}...'")
                     
@@ -181,7 +172,6 @@ class TextProcessor:
                     ).to(self.device)
                     
                     with torch.no_grad():
-                        # Параметры генерации с учетом языка
                         generation_params = {
                             "max_length": max_length,
                             "min_length": min_length,
@@ -193,7 +183,6 @@ class TextProcessor:
                             "top_p": 0.9
                         }
                         
-                        # Для не-русских языков используем более консервативные параметры
                         if language != "ru":
                             generation_params["num_beams"] = 5
                             generation_params["length_penalty"] = 1.0
@@ -211,21 +200,18 @@ class TextProcessor:
                         
                     summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
                     
-                    # Очищаем выходные данные для mT5
                     if language != "ru":
                         summary = self._clean_mt5_output(summary)
                         
                     logger.info(f"Generated summary for chunk {i+1}: '{summary[:50]}...'")
                     summaries.append(summary)
                     
-                    # Очищаем память после каждого третьего чанка
                     if (i + 1) % 3 == 0:
                         self._clear_gpu_memory()
                         logger.info(f"Memory cleared after chunk {i+1}")
                         
                 except Exception as e:
                     logger.error(f"Error processing chunk {i}: {str(e)}", exc_info=True)
-                    # Пропускаем проблемный чанк и продолжаем
                     continue
             
             logger.info("Summarization completed successfully")
@@ -242,7 +228,6 @@ class TextProcessor:
         target_lang: str = "ru",
         max_length: int = 512
     ) -> str:
-        """Переводит текст с использованием mT5."""
         try:
             logger.info(f"Starting translation from {source_lang} to {target_lang}")
             chunks = self._chunk_text(text)
@@ -250,7 +235,6 @@ class TextProcessor:
             
             for i, chunk in enumerate(chunks):
                 try:
-                    # Формируем инструкцию для перевода
                     input_text = f"translate {source_lang} to {target_lang}: {chunk}"
                     logger.info(f"Translation input for chunk {i+1}: '{input_text[:50]}...'")
                     
@@ -273,20 +257,17 @@ class TextProcessor:
                         
                     translation = self.mt5_tokenizer.decode(outputs[0], skip_special_tokens=True)
                     
-                    # Очищаем выходные данные от специальных токенов
                     translation = self._clean_mt5_output(translation)
                     logger.info(f"Translation output for chunk {i+1}: '{translation[:50]}...'")
                     
                     translations.append(translation)
                     
-                    # Очищаем память после каждого третьего чанка
                     if (i + 1) % 3 == 0:
                         self._clear_gpu_memory()
                         logger.info(f"Memory cleared after translation chunk {i+1}")
                         
                 except Exception as e:
                     logger.error(f"Error processing translation chunk {i}: {str(e)}", exc_info=True)
-                    # Пропускаем проблемный чанк и продолжаем
                     continue
                     
             result = " ".join(translations)

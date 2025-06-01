@@ -24,7 +24,6 @@ import functools
 
 logger = logging.getLogger(__name__)
 
-# Инициализация сервисов
 transcription_service = None
 text_processor = None
 
@@ -45,19 +44,15 @@ def get_text_processor():
         )
     return text_processor
 
-# Создаем пул потоков для параллельной обработки с бóльшим количеством рабочих потоков
 executor = ThreadPoolExecutor(max_workers=max(2, multiprocessing.cpu_count()))
 
-# Вспомогательная функция для выполнения синхронной задачи в ThreadPoolExecutor
 async def run_in_threadpool(func: Callable, *args, **kwargs) -> Any:
-    """Запускает синхронную функцию в пуле потоков."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         executor, functools.partial(func, *args, **kwargs)
     )
 
 def validate_file(file: UploadFile) -> None:
-    """Validate file size and extension."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     
@@ -79,20 +74,16 @@ def validate_file(file: UploadFile) -> None:
     file.file.seek(0)
 
 def extract_audio_from_memory(file_content: bytes) -> str:
-    """Extract audio from video/audio file in memory."""
     temp_input_path = None
     temp_output_path = None
     try:
-        # Создаем временный файл для входных данных
         with tempfile.NamedTemporaryFile(suffix=".input", delete=False) as temp_input:
             temp_input.write(file_content)
             temp_input_path = temp_input.name
 
-        # Создаем временный файл для выходных данных
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_output:
             temp_output_path = temp_output.name
 
-        # Используем ffmpeg для извлечения аудио с оптимизированными параметрами
         command = [
             "ffmpeg",
             "-i", temp_input_path,
@@ -109,14 +100,12 @@ def extract_audio_from_memory(file_content: bytes) -> str:
 
         subprocess.run(command, check=True, capture_output=True)
 
-        # Удаляем временный входной файл
         if temp_input_path and os.path.exists(temp_input_path):
             os.unlink(temp_input_path)
 
         return temp_output_path
     except Exception as e:
         logger.error(f"Error in extract_audio_from_memory: {str(e)}", exc_info=True)
-        # Очищаем временные файлы в случае ошибки
         if temp_input_path and os.path.exists(temp_input_path):
             os.unlink(temp_input_path)
         if temp_output_path and os.path.exists(temp_output_path):
@@ -124,7 +113,6 @@ def extract_audio_from_memory(file_content: bytes) -> str:
         raise
 
 def transcribe_audio(audio_path: str, language: str = "ru") -> str:
-    """Transcribe audio using Faster Whisper."""
     try:
         service = get_transcription_service()
         segments = service.transcribe_file(
@@ -137,8 +125,6 @@ def transcribe_audio(audio_path: str, language: str = "ru") -> str:
         raise
 
 def split_into_sentences(text: str) -> List[str]:
-    """Разбивает текст на предложения с учетом особенностей русского языка."""
-    # Паттерн для разделения предложений
     exceptions = r'(?<!г)(?<!гг)(?<!руб)(?<!тыс)(?<!млн)(?<!млрд)(?<!см)(?<!им)(?<!т)(?<!д)(?<!проф)(?<!доц)(?<!акад)(?<!св)(?<!ул)(?<!пр)(?<!др)'
     pattern = f'{exceptions}[.!?]+'
     
@@ -158,12 +144,10 @@ def split_into_sentences(text: str) -> List[str]:
     return result
 
 def get_token_count(text: str) -> int:
-    """Возвращает приблизительное количество токенов в тексте."""
     words = text.split()
     return len(words) // 4 + 1
 
 def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 800, overlap: int = 50) -> List[str]:
-    """Создает перекрывающиеся чанки текста с оптимизированным размером."""
     chunks = []
     current_chunk = []
     current_length = 0
@@ -174,7 +158,6 @@ def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 800, over
         if current_length + sentence_tokens > max_tokens:
             if current_chunk:
                 chunks.append(" ".join(current_chunk))
-                # Берем последние 2 предложения для лучшего контекста
                 overlap_sentences = current_chunk[-2:] if len(current_chunk) > 2 else current_chunk
                 current_chunk = overlap_sentences + [sentence]
                 current_length = sum(get_token_count(s) for s in current_chunk)
@@ -192,17 +175,14 @@ def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 800, over
     return chunks
 
 def clear_gpu_memory():
-    """Очищает память GPU."""
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
 
 def summarize_text(text: str, language: str) -> str:
-    """Суммаризирует текст, используя соответствующую модель."""
     try:
         logger.info(f"Summarizing text in {language}, text length: {len(text)} chars")
         
-        # Проверяем язык
         if language not in LANGUAGE_PREFIXES:
             logger.warning(f"Unsupported language: {language}, falling back to English")
             language = "en"
@@ -223,14 +203,11 @@ def summarize_text(text: str, language: str) -> str:
         raise
 
 def translate_text(text: str, target_language: str, source_language: str = None) -> str:
-    """Переводит текст на целевой язык."""
     try:
-        # Если исходный язык не указан, предполагаем английский
         source_language = source_language or "en"
         
         logger.info(f"Translating text from {source_language} to {target_language}, text length: {len(text)} chars")
         
-        # Проверяем языки
         if target_language not in LANGUAGE_NAMES:
             logger.warning(f"Unsupported target language: {target_language}, falling back to Russian")
             target_language = "ru"
@@ -253,10 +230,8 @@ def translate_text(text: str, target_language: str, source_language: str = None)
         raise
 
 def process_chunk(chunk: str, language: str) -> str:
-    """Обрабатывает один чанк текста."""
     try:
         processor = get_text_processor()
-        # Улучшенный промпт с четкими инструкциями
         prefix = LANGUAGE_PREFIXES.get(language, LANGUAGE_PREFIXES['en'])
         if language == 'ru':
             prompt = f"""Сделай подробное и информативное краткое содержание следующего текста. 
@@ -280,14 +255,13 @@ def process_chunk(chunk: str, language: str) -> str:
             language=language,
             max_length=settings_model.SUMMARIZATION_MAX_LENGTH,
             min_length=settings_model.SUMMARIZATION_MIN_LENGTH,
-            temperature=0.3  # Уменьшаем температуру для более консервативных результатов
+            temperature=0.3
         )
     except Exception as e:
         logger.error(f"Error processing chunk: {str(e)}")
         return chunk
 
 def process_chunks_parallel(chunks: List[str], language: str) -> List[str]:
-    """Параллельная обработка чанков с оптимизированным распределением."""
     max_workers = min(len(chunks), multiprocessing.cpu_count() * 2)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_chunk, chunk, language) for chunk in chunks]
@@ -295,13 +269,11 @@ def process_chunks_parallel(chunks: List[str], language: str) -> List[str]:
     return results
 
 def merge_summaries(summaries: List[str], language: str) -> str:
-    """Объединяет саммари из разных чанков в одно целое."""
     if len(summaries) <= 1:
         return summaries[0] if summaries else ""
         
     processor = get_text_processor()
     
-    # Улучшенный промпт для объединения
     if language == 'ru':
         prompt = f"""Объедини следующие краткие описания в одно подробное и связное краткое содержание.
         Сохрани все важные детали, основные мысли и ключевые моменты.
@@ -330,41 +302,30 @@ def merge_summaries(summaries: List[str], language: str) -> str:
     )
 
 def generate_summary(text: str, language: str = "ru") -> str:
-    """Генерирует саммари с оптимизированной обработкой."""
     try:
-        # Очищаем память GPU перед началом
         clear_gpu_memory()
         
-        # Разбиваем на предложения
         sentences = split_into_sentences(text)
         
-        # Если текст короткий - обрабатываем сразу
         if len(sentences) < 5:
             return process_chunk(text, language)
             
-        # Создаем оптимизированные чанки
         chunks = create_chunks_with_overlap(sentences)
         
-        # Логируем информацию о чанках
         logger.info(f"Created {len(chunks)} chunks for summarization")
         for i, chunk in enumerate(chunks):
             logger.info(f"Chunk {i+1} length: {len(chunk.split())} words")
         
-        # Параллельно обрабатываем чанки
         chunk_summaries = process_chunks_parallel(chunks, language)
         
-        # Логируем промежуточные результаты
         logger.info(f"Generated {len(chunk_summaries)} summaries")
         for i, summary in enumerate(chunk_summaries):
             logger.info(f"Summary {i+1} length: {len(summary.split())} words")
         
-        # Объединяем результаты
         final_summary = merge_summaries(chunk_summaries, language)
         
-        # Логируем финальный результат
         logger.info(f"Final summary length: {len(final_summary.split())} words")
         
-        # Очищаем память
         clear_gpu_memory()
         
         return final_summary
@@ -374,36 +335,28 @@ def generate_summary(text: str, language: str = "ru") -> str:
         raise
 
 async def process_media_file(file: UploadFile, language: str) -> dict:
-    """Обрабатывает медиафайл: транскрибация, суммаризация и перевод."""
     try:
-        # Валидация файла
         validate_file(file)
         
-        # Валидация языка
         if language not in LANGUAGE_PREFIXES:
             logger.warning(f"Unsupported language: {language}, falling back to English")
             language = "en"
         
         logger.info(f"Processing media file in language: {language}")
         
-        # Читаем содержимое файла
         content = await file.read()
         
-        # Извлекаем аудио (запускаем в пуле потоков, так как это I/O операция)
         audio_path = await run_in_threadpool(extract_audio_from_memory, content)
         
         try:
-            # Транскрибируем аудио (тяжелая операция - запускаем в пуле потоков)
             logger.info(f"Starting transcription in {language}")
             transcription = await run_in_threadpool(transcribe_audio, audio_path, language)
             logger.info(f"Transcription completed, length: {len(transcription)} chars")
             
-            # Генерируем краткое содержание (тяжелая операция - запускаем в пуле потоков)
             logger.info(f"Starting summarization in {language}")
             summary = await run_in_threadpool(generate_summary, transcription, language)
             logger.info(f"Summarization completed, length: {len(summary)} chars")
             
-            # Если язык не русский, делаем перевод
             translation = None
             if language != "ru":
                 logger.info(f"Starting translation from {language} to Russian")
@@ -417,11 +370,9 @@ async def process_media_file(file: UploadFile, language: str) -> dict:
             }
             
         finally:
-            # Удаляем временный аудиофайл
             if os.path.exists(audio_path):
                 os.unlink(audio_path)
             
-            # Очищаем память
             await run_in_threadpool(clear_gpu_memory)
             
     except Exception as e:

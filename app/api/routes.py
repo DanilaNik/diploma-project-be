@@ -18,17 +18,13 @@ from app.auth import create_access_token
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Схема аутентификации для защищенных ручек
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
-# Схема аутентификации для суммаризации (опциональная)
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
-    """Register a new user."""
     try:
-        # Check if user already exists
         db_user = get_user_by_email(db, email=user.email)
         if db_user:
             raise HTTPException(
@@ -36,7 +32,6 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
                 detail="Пользователь с таким email уже зарегистрирован. Пожалуйста, используйте другой email или выполните вход."
             )
         
-        # Create new user
         hashed_password = get_password_hash(user.password)
         db_user = User(
             email=user.email,
@@ -48,7 +43,6 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         db.refresh(db_user)
         return db_user
     except HTTPException:
-        # Прокидываем HTTPException дальше
         raise
     except Exception as e:
         logger.error(f"Error registering user: {str(e)}")
@@ -59,7 +53,6 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Login user and return JWT token."""
     try:
         user = authenticate_user(db, form_data.username, form_data.password)
         if not user:
@@ -88,24 +81,20 @@ async def create_summarization(
     db: Session = Depends(get_db)
 ):
     try:
-        # Определяем user_id в зависимости от наличия токена
-        user_id = None  # По умолчанию для неавторизованных пользователей
+        user_id = None
         if token:
             try:
                 current_user = await get_current_user(token, db)
                 user_id = current_user.id
             except Exception as e:
                 logger.warning(f"Invalid token: {str(e)}")
-                # Продолжаем выполнение без user_id
         
-        # Обрабатываем файл
         result = await process_media_file(file, language)
         
-        # Создаем запись в базе данных
         db_request = SummarizationRequest(
-            user_id=user_id,  # Может быть None для неавторизованных пользователей
-            filename=file.filename,  # Используем оригинальное имя файла
-            transcript=result["transcription"],  # Используем правильный ключ
+            user_id=user_id,
+            filename=file.filename,
+            transcript=result["transcription"],
             summary=result["summary"]
         )
         db.add(db_request)
@@ -120,7 +109,6 @@ async def create_summarization(
             "created_at": db_request.created_at
         }
         
-        # Добавляем перевод, если он есть
         if result.get("translation"):
             response["translation"] = result["translation"]
             
@@ -139,15 +127,11 @@ async def create_public_summarization(
     language: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """Create a new summarization request for unauthenticated users."""
     try:
-        # Валидация файла
         validate_file(file)
         
-        # Обработка файла и получение результатов
         result = await process_media_file(file, language)
         
-        # Создание записи в базе данных с user_id=0
         request = SummarizationRequest(
             user_id=0,
             filename=file.filename,
@@ -186,35 +170,25 @@ async def get_requests(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
-    """
-    Получить историю запросов пользователя с возможностью поиска.
-    
-    Можно искать по имени файла (filename_query) и/или по содержимому транскрипции (content_query).
-    Если оба параметра пустые или не указаны, возвращает все запросы пользователя.
-    """
     try:
         current_user = await get_current_user(token, db)
         
-        # Создаем базовый запрос
         requests_query = db.query(SummarizationRequest).filter(
             SummarizationRequest.user_id == current_user.id
         )
         
-        # Применяем фильтр по имени файла, если он указан
         if search_params.filename_query:
             search_term = f"%{search_params.filename_query}%"
             requests_query = requests_query.filter(
                 SummarizationRequest.filename.ilike(search_term)
             )
         
-        # Применяем фильтр по содержимому транскрипции, если он указан
         if search_params.content_query:
             search_term = f"%{search_params.content_query}%"
             requests_query = requests_query.filter(
                 SummarizationRequest.transcript.ilike(search_term)
             )
         
-        # Сортируем результаты по дате создания (новые сверху)
         requests = requests_query.order_by(SummarizationRequest.created_at.desc()).all()
         
         return [
@@ -241,13 +215,9 @@ async def get_request_by_id(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
-    """
-    Получить конкретный запрос по ID.
-    """
     try:
         current_user = await get_current_user(token, db)
         
-        # Ищем запрос по ID и проверяем, что он принадлежит текущему пользователю
         request = db.query(SummarizationRequest).filter(
             SummarizationRequest.id == request_id,
             SummarizationRequest.user_id == current_user.id
@@ -284,13 +254,9 @@ async def update_request(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ):
-    """
-    Обновить транскрипцию и/или саммари запроса по ID.
-    """
     try:
         current_user = await get_current_user(token, db)
         
-        # Ищем запрос по ID и проверяем, что он принадлежит текущему пользователю
         request = db.query(SummarizationRequest).filter(
             SummarizationRequest.id == request_id,
             SummarizationRequest.user_id == current_user.id
@@ -302,14 +268,12 @@ async def update_request(
                 detail="Запрос не найден или у вас нет доступа к нему"
             )
         
-        # Обновляем только те поля, которые были переданы
         if transcript is not None:
             request.transcript = transcript
         
         if summary is not None:
             request.summary = summary
         
-        # Сохраняем изменения
         db.commit()
         db.refresh(request)
         
@@ -332,7 +296,6 @@ async def update_request(
 
 @router.get("/check-auth")
 async def check_auth(current_user: User = Depends(get_current_user)):
-    """Check if the user is authenticated and return their email and name."""
     return {
         "is_authenticated": True,
         "email": current_user.email,
@@ -345,9 +308,6 @@ async def translate(
     target_language: str = Form(...),
     current_user: UserResponse = Depends(get_current_user)
 ):
-    """
-    Переводит текст на указанный язык
-    """
     try:
         translated_text = translate_text(text, target_language)
         return {"translated_text": translated_text}
